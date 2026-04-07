@@ -75,39 +75,6 @@ jobs:
           echo 'android.native.buildOutput=verbose' >> gradle.properties
           sed -i 's/org.gradle.configuration-cache=true//g' gradle.properties
           ./gradlew clean assembleDebug assembleRelease
-          echo "BUILD_TOOL_VERSION=$(ls /usr/local/lib/android/sdk/build-tools/ | tail -n 1)" >> $GITHUB_ENV
-
-      - name: Sign Release
-        env:
-          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
-          BUILD_TOOLS_VERSION: ${{ env.BUILD_TOOL_VERSION }}
-        if: ${{ env.SIGNING_KEY != '' }}
-        continue-on-error: true
-        uses: kevin-david/zipalign-sign-android-release@v2
-        id: sign_app
-        with:
-          releaseDirectory: app/build/outputs/apk/release
-          signingKeyBase64: ${{ secrets.SIGNING_KEY }}
-          alias: ${{ secrets.ALIAS }}
-          keyStorePassword: ${{ secrets.KEY_STORE_PASSWORD }}
-          keyPassword: ${{ secrets.KEY_PASSWORD }}
-          zipAlign: true
-
-      - name: Sign Debug APK
-        env:
-          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
-          BUILD_TOOLS_VERSION: ${{ env.BUILD_TOOL_VERSION }}
-        # if: ${{ env.SIGNING_KEY != '' }}
-        # continue-on-error: true
-        uses: kevin-david/zipalign-sign-android-release@v2
-        id: sign_debug_app
-        with:
-          releaseDirectory: app/build/outputs/apk/debug
-          signingKeyBase64: ${{ secrets.SIGNING_KEY }}
-          alias: ${{ secrets.ALIAS }}
-          keyStorePassword: ${{ secrets.KEY_STORE_PASSWORD }}
-          keyPassword: ${{ secrets.KEY_PASSWORD }}
-          zipAlign: true
 
       - name: Upload mappings
         uses: actions/upload-artifact@v6
@@ -115,25 +82,17 @@ jobs:
           name: "mappings"
           path: "app/build/outputs/mapping/release/"
 
-      - name: Upload build artifact1
-        env:
-          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
-        if: ${{ env.SIGNING_KEY != '' }}
+      - name: Upload Release APK
         uses: actions/upload-artifact@v6
         with:
-          name: APatch-Release
-          path: |
-            ${{ steps.sign_app.outputs.signedReleaseFile }}
+          name: APatch-Release-Unsigned
+          path: app/build/outputs/apk/release/*.apk
 
-      - name: Upload build artifact2
-        env:
-          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
-        if: ${{ env.SIGNING_KEY != '' }}
+      - name: Upload Debug APK
         uses: actions/upload-artifact@v6
         with:
-          name: APatch-Debug
-          path: |
-            ${{ steps.sign_debug_app.outputs.signedReleaseFile }}
+          name: APatch-Debug-Unsigned
+          path: app/build/outputs/apk/debug/*.apk
 
       - name: Post to channel
         if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && github.ref_type != 'tag' }}
@@ -145,8 +104,9 @@ jobs:
         run: |
           if [ -n "${BOT_TOKEN}" ]; then
             CHANNELS=(-1002058433411 -1001910818234)
-            RELEASE_APK="${{ steps.sign_app.outputs.signedReleaseFile }}"
-            DEBUG_APK="${{ steps.sign_debug_app.outputs.signedReleaseFile }}"
+            # Find the APK files in the build directory
+            RELEASE_APK=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
+            DEBUG_APK=$(find app/build/outputs/apk/debug -name "*.apk" | head -n 1)
           
             for CHANNEL in "${CHANNELS[@]}"; do
               URL=$(python3 .github/scripts/telegram_url.py $CHANNEL)
@@ -157,15 +117,13 @@ jobs:
           fi
 
       - name: Release apk
-        env:
-          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
-        if: ${{ env.SIGNING_KEY != '' && github.ref_type == 'tag' }}
+        if: ${{ github.ref_type == 'tag' }}
         continue-on-error: true
         uses: ncipollo/release-action@v1
         with:
           token: ${{ github.token }}
           tag: ${{ steps.parse_version.outputs.VERSION }}
-          artifacts: ${{steps.sign_app.outputs.signedReleaseFile}}
+          artifacts: "app/build/outputs/apk/release/*.apk"
           generateReleaseNotes: true
           makeLatest: true
           replacesArtifacts: true
